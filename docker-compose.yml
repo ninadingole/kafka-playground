@@ -1,0 +1,56 @@
+version: "3.9"
+
+services:
+  zookeeper-kafka:
+    image: confluentinc/cp-zookeeper:latest
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      # fake healthcheck just to have one to simplify integration tests status check
+      test: [ "CMD", "date" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka-kafka:
+    image: wurstmeister/kafka:latest
+    restart: always
+    depends_on:
+      - zookeeper-kafka
+    ports:
+      - "9092:9092"
+    volumes:
+      # It's the only way to deal with Kafka non-static exposed ports to host
+      # See: https://github.com/wurstmeister/kafka-docker/blob/master/start-kafka.sh#L65-L76
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper-kafka:2181'
+      PORT_COMMAND: "docker port $$(hostname) 9092/tcp | cut -d: -f2"
+      KAFKA_LISTENERS: "LISTENER_INTERNAL://kafka-kafka:29092,LISTENER_HOST://:9092"
+      KAFKA_ADVERTISED_LISTENERS: LISTENER_INTERNAL://kafka-kafka:29092,LISTENER_HOST://localhost:_{PORT_COMMAND}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: LISTENER_INTERNAL:PLAINTEXT,LISTENER_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: LISTENER_INTERNAL
+      CONFLUENT_SUPPORT_CUSTOMER_ID: 'anonymous'
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_CREATE_TOPICS: 'test:1:1'
+    healthcheck:
+      test: [ "CMD", "/opt/kafka/bin/kafka-topics.sh", "--list", "--bootstrap-server", "kafka-kafka:29092" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafdrop-ui:
+    image: obsidiandynamics/kafdrop:latest
+    restart: always
+    environment:
+      KAFKA_BROKERCONNECT: kafka-kafka:29092
+      JVM_OPTS: "-Xms16M -Xmx48M -Xss180K -XX:-TieredCompilation -XX:+UseStringDeduplication -noverify"
+      SERVER_SERVLET_CONTEXTPATH: "/"
+    ports:
+      - "9001:9000"
+    depends_on:
+      - kafka-kafka
