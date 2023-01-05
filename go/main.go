@@ -15,6 +15,10 @@ const (
 	groupID = "group-id"
 )
 
+type ErrorHandler interface {
+	Handle(error, *sarama.ConsumerMessage)
+}
+
 func main() {
 
 	config := getConfig()
@@ -27,7 +31,7 @@ func main() {
 		panic(err)
 	}
 
-	handler := &handler{}
+	handler := NewHandler(&DropMessageErrorHandler{})
 	go func() {
 		for {
 			select {
@@ -61,18 +65,23 @@ func getConfig() *sarama.Config {
 	return config
 }
 
-type handler struct {
+type Handler struct {
+	errorHandler ErrorHandler
 }
 
-func (h *handler) Setup(sarama.ConsumerGroupSession) error {
+func NewHandler(errorHandler ErrorHandler) *Handler {
+	return &Handler{errorHandler: errorHandler}
+}
+
+func (h *Handler) Setup(sarama.ConsumerGroupSession) error {
 	return nil
 }
 
-func (h *handler) Cleanup(sarama.ConsumerGroupSession) error {
+func (h *Handler) Cleanup(sarama.ConsumerGroupSession) error {
 	return nil
 }
 
-func (h *handler) ConsumeClaim(_ sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+func (h *Handler) ConsumeClaim(_ sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for msg := range claim.Messages() {
 		key := msg.Key
 		value := msg.Value
@@ -80,7 +89,11 @@ func (h *handler) ConsumeClaim(_ sarama.ConsumerGroupSession, claim sarama.Consu
 		var employee Employee
 		err := json.Unmarshal(value, &employee)
 		if err != nil {
-			panic(err)
+			if h.errorHandler == nil {
+				panic(err)
+			}
+
+			h.errorHandler.Handle(err, msg)
 		}
 
 		fmt.Println(fmt.Sprintf("key: %s, value: %s", string(key), employee))
